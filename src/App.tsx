@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { createConnectTransport } from "@bufbuild/connect-web";
 import { createPromiseClient } from "@bufbuild/connect";
-import { LogService } from './generated/logging/log_service_connect';
+import { LogService } from './generated/logging/log_service_connectweb';
 import {
-  // LogMessage,
+  LogMessage,
   SubscribeRequest
 } from './generated/logging/log_service_pb';
 
@@ -27,16 +27,17 @@ function App() {
   const client = createPromiseClient(LogService, transport);
 
   useEffect(() => {
-    const fetchLogs = async () => {
-      // Create request using the protobuf message
-      const request = {
-        clientId: "web-client"
-      } as SubscribeRequest;
+    let abortController = new AbortController();
 
+    async function startStream() {
       try {
-        const stream = client.subscribeToLogs(request);
+        const request = { clientId: "web-client" } as SubscribeRequest;
+        const stream = await client.subscribeToLogs(request, {
+          signal: abortController.signal,
+        }) as AsyncIterable<LogMessage>;;
+
         for await (const message of stream) {
-          setLogs(prevLogs => [...prevLogs, {
+          const log: Log = {
             timestamp: message.timestamp,
             level: message.level,
             message: message.message,
@@ -44,14 +45,23 @@ function App() {
             threadId: message.threadId,
             file: message.file,
             line: message.line
-          }]);
+          };
+          setLogs(prev => [...prev, log]);
         }
-      } catch (err) {
-        console.error('Stream error:', err);
+      } catch (error: any) {
+        if (error.name === 'AbortError') {
+          console.log('Stream aborted');
+        } else {
+          console.error('Stream error:', error);
+        }
       }
-    };
+    }
 
-    fetchLogs();
+    startStream();
+
+    return () => {
+      abortController.abort();
+    };
   }, []);
 
   return (
